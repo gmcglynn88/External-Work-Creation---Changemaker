@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>External Work Creation</title>
+  <link href="https://fonts.googleapis.com/css2?family=Aptos:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <header>
+    <div class="header-content">
+      <h1>Change Maker by IPI</h1>
+      <div class="logo">
+        <img src="IPI_Primary_Identity.png" alt="IPI Logo"/>
+      </div>
+    </div>
+  </header>
+
+  <main class="content-area">
+    <div class="app-window">
+      <div class="form-section">
+        <h2>External Work Creation</h2>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="queueSelect">Select Queue</label>
+            <select id="queueSelect"></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="userSelect">Select User</label>
+            <select id="userSelect"></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="externalReference">External Reference (optional)</label>
+            <input type="text" id="externalReference" placeholder="Enter external reference"/>
+          </div>
+        </div>
+        <button id="createInteractionBtn">Create Proxy Interaction</button>
+        <div id="statusMessage" class="status-message" style="display:none;"></div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // ——— Only the External Work tab’s JS ———
+    const REGION = 'mypurecloud.ie';
+    let token = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const hash = window.location.hash.substring(1);
+      token = (new URLSearchParams(hash)).get('access_token');
+      if (!token) {
+        window.location.href = `https://login.${REGION}/oauth/authorize?client_id=4652c8b5-9117-43c6-8e54-77eeb38aebb8&response_type=token&redirect_uri=${encodeURIComponent(location.href)}`;
+      } else {
+        initExternal();
+      }
+    });
+
+    async function initExternal() {
+      await Promise.all([fetchAllPages('https://api.mypurecloud.ie/api/v2/routing/queues'),
+                         fetchAllPages('https://api.mypurecloud.ie/api/v2/users')])
+        .then(([qs, us]) => {
+          const sq = document.getElementById('queueSelect'),
+                su = document.getElementById('userSelect');
+          qs.forEach(q=>{
+            const o=document.createElement('option'); o.value=q.id; o.textContent=q.name; sq.add(o);
+          });
+          us.forEach(u=>{
+            const o=document.createElement('option'); o.value=u.id; o.textContent=u.name; su.add(o);
+          });
+        });
+
+      document.getElementById('createInteractionBtn')
+        .addEventListener('click', createInteraction);
+    }
+
+    async function fetchAllPages(url) {
+      let items = [], page=1, more=true;
+      while(more){
+        const resp = await fetch(`${url}?pageNumber=${page}&pageSize=100`, {
+          headers:{Authorization:`Bearer ${token}`}
+        });
+        const d = await resp.json();
+        items.push(...d.entities);
+        page < d.pageCount ? page++ : more=false;
+      }
+      return items;
+    }
+
+    async function createInteraction() {
+      const out = document.getElementById('statusMessage'),
+            queueId = document.getElementById('queueSelect').value,
+            userId  = document.getElementById('userSelect').value,
+            ref     = document.getElementById('externalReference').value;
+
+      if (!queueId||!userId) {
+        return out.innerHTML = 'Queue & User required', out.className='status-message error', out.style.display='block';
+      }
+      out.innerHTML = 'Creating…'; out.className='status-message info'; out.style.display='block';
+
+      try {
+        // create, assign, disconnect (same as before)…
+        const conv = await fetch('https://api.mypurecloud.ie/api/v2/conversations/emails',{
+          method:'POST',
+          headers:{ 'Authorization':`Bearer ${token}`, 'Content-Type':'application/json' },
+          body: JSON.stringify({
+            queueId, provider:'QualityForm', direction:'INBOUND',
+            fromName:'External Work', attributes:{'External Link':ref||''}
+          })
+        }).then(r=>r.json());
+
+        const details = await fetch(`https://api.mypurecloud.ie/api/v2/conversations/${conv.id}`,{
+          headers:{ Authorization:`Bearer ${token}` }
+        }).then(r=>r.json());
+
+        const pId = details.participants[1].id;
+
+        await fetch(`https://api.mypurecloud.ie/api/v2/conversations/emails/${conv.id}/participants/${pId}/replace`, {
+          method:'POST',
+          headers:{ 'Authorization':`Bearer ${token}`, 'Content-Type':'application/json' },
+          body: JSON.stringify({ userId })
+        });
+
+        await fetch(`https://api.mypurecloud.ie/api/v2/conversations/emails/${conv.id}`, {
+          method:'PATCH',
+          headers:{ 'Authorization':`Bearer ${token}`, 'Content-Type':'application/json' },
+          body: JSON.stringify({ state:'disconnected' })
+        });
+
+        out.innerHTML = 'Interaction created successfully!';
+        out.className = 'status-message success';
+
+      } catch (err) {
+        out.innerHTML = `Error: ${err.message}`;
+        out.className = 'status-message error';
+      }
+    }
+  </script>
+</body>
+</html>
